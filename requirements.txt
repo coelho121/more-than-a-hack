@@ -1,0 +1,16 @@
+# Versões fixas de propósito: o repo tem de regenerar EXATAMENTE o ficheiro submetido.
+# Testado para Python 3.11 / 3.12 (o Colab usa 3.12).
+#
+# Se alguém precisar de um pacote novo: adiciona aqui COM versão fixa e avisa os outros.
+numpy==1.26.4
+pandas==2.2.3
+
+# Leitura do tracking e do Smart Tagging (versão que o repo oficial usa)
+kloppy==3.18.0
+
+# Gráficos e notebooks
+matplotlib==3.9.2
+notebook==7.2.2
+
+# Limpa os outputs dos notebooks antes de cada commit (ver README)
+nbstripout==0.7.1

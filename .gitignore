@@ -1,0 +1,51 @@
+# =============================================================================================
+# REGRA DE OURO: os dados do jogo NUNCA entram no git.
+# Este repo vai ser público no fim. O que entra uma vez no histórico fica lá para sempre,
+# por isso na dúvida, mete aqui primeiro e tira depois.
+# =============================================================================================
+
+# -- dados do jogo (cada um tem a sua cópia local) ---------------------------------------------
+data/*
+!data/README.md
+*.mp4
+*.gzip
+*.pl3container
+
+# -- cache gerada a partir dos dados (deriva dos dados, também não pode ir) --------------------
+cache/*
+!cache/.gitkeep
+*.npy
+*.npz
+*.parquet
+*.pkl
+
+# -- ground truth privado (nunca vamos ter, mas fica a proteção) -------------------------------
+*_possession_gt.csv
+*_possession_gt_meta.json
+*_possession_gt_reference.csv
+possession_by_frame.pkl
+
+# -- submissões --------------------------------------------------------------------------------
+# Uma submissão é um conjunto de labels para o jogo inteiro: não vai para o git.
+# Exceção: as 4 baselines oficiais (vêm do repo público da Metrica).
+evaluation/results/*.csv
+!evaluation/results/baseline_*.csv
+evaluation/reports/
+evaluation/scoreboard.csv
+
+# -- notebooks ---------------------------------------------------------------------------------
+.ipynb_checkpoints/
+
+# -- PDFs: só o doc técnico, e só dentro de docs/ ----------------------------------------------
+*.pdf
+!docs/*.pdf
+
+# -- editores e lixo de build ------------------------------------------------------------------
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.DS_Store

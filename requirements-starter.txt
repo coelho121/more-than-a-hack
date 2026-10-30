@@ -1,0 +1,3 @@
+# Ficheiro do repo oficial, mantido para os notebooks em starter/ não se queixarem.
+# Usem só o requirements.txt da raiz, que já tem tudo com versões fixas.
+-r requirements.txt
