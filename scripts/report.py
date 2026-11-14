@@ -3,10 +3,12 @@
     python scripts/report.py
 
 Imprime, para a baseline e para o pipeline atual: distribuição de labels, número e duração das
-posses e das paragens. Depois, alguns agregados do tracking e do Smart Tagging que servem para
-escolher parâmetros com lógica de futebol (e não pelo GT público).
+posses e das paragens. Depois mostra de onde vem a bola morta, como foram classificados os
+buracos sem bola, se os set pieces do Smart Tagging coincidem com paragens detetadas, e alguns
+números internos da posse.
 
-O score no GT público aparece no fim SÓ como alarme de "partiu-se alguma coisa".
+Serve para escolher parâmetros com lógica de futebol (e não pelo GT público). O score no GT
+público aparece SÓ como alarme de "partiu-se alguma coisa".
 """
 
 import os
@@ -23,12 +25,6 @@ import possession_metrics as pm  # noqa: E402
 import load_smart_tagging as official_tagging  # noqa: E402
 
 FPS = 25
-
-
-def runs_of(mask):
-    """(inícios, fins) dos troços consecutivos de True."""
-    edges = np.diff(np.concatenate(([0], mask.astype(np.int8), [0])))
-    return np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
 
 
 def durations_line(name, frames):
@@ -66,6 +62,10 @@ def label_summary(name, labels):
     segs = pm.segments(codes, runs)
     durations_line("posses", [b - a for a, b, k in segs if k in (pm.H, pm.A)])
     durations_line("paragens", [b - a for a, b, k in segs if k == pm.D])
+    # Posses por parte, para ver se as duas partes são parecidas.
+    for index, (start, stop) in enumerate(runs, 1):
+        n_half = sum(1 for a, b, k in segs if k in (pm.H, pm.A) and start <= a < stop)
+        print("  parte {}: {} posses".format(index, n_half))
     print("  GT público (só alarme):", submission.score_public(labels))
 
 
@@ -80,88 +80,97 @@ def kickoff_summary(atd, tags):
         ref = published.get(names.get(k["half"]))
         diff = "" if ref is None else "   publicado {}   diferença {:+d} frames".format(
             ref, k["frame"] - ref)
-        print("  parte {}: frame {}{}   [{}]   D acrescentado: {} frames".format(
-            k["half"], k["frame"], diff, k["method"], k["frame"] - k["first"]))
+        print("  parte {}: frame {}{}   [{}]".format(k["half"], k["frame"], diff, k["method"]))
 
 
-def tracking_summary(atd):
-    print("\n== tracking (só frames avaliados) ==")
+def dead_summary(atd, tags):
+    print("\n== de onde vem a bola morta (% dos frames avaliados) ==")
     graded = match.graded_mask(len(atd["ball_xy"]))
-    n = int(graded.sum())
+    n = float(graded.sum())
+    parts = dead_ball.components(atd, tags)
     visible = features.ball_visible(atd)
-    gv = graded & visible
-    print("  bola visível: {:.1f}%".format(100.0 * gv.sum() / n))
-
-    lengths = []
-    for start, stop in match.half_runs():
-        a, b = runs_of(~visible[start:stop])
-        lengths.extend((b - a).tolist())
-    lengths = np.asarray(lengths, dtype=np.float64) / FPS
-    print("  buracos sem bola: {}".format(len(lengths)))
-    for low, high in ((0, 0.5), (0.5, 1), (1, 2), (2, 5), (5, 10), (10, 30), (30, 1e9)):
-        pick = (lengths >= low) & (lengths < high)
-        label = "{}-{}s".format(low, high) if high < 1e9 else ">{}s".format(low)
-        print("    {:<8} n={:>5}   {:>5.1f}% dos frames avaliados".format(
-            label, int(pick.sum()), 100.0 * lengths[pick].sum() * FPS / n))
-
-    dist, _ = features.nearest_player(atd)
-    d = dist[gv & np.isfinite(dist)]
-    if len(d):
-        print("  distância do jogador mais perto à bola (m): " + "  ".join(
-            "p{} {:.2f}".format(p, np.percentile(d, p)) for p in (25, 50, 75, 90, 95)))
-        print("    " + "  ".join("<{}m {:.1f}%".format(t, 100.0 * (d < t).mean())
-                                 for t in (1, 1.5, 2, 3, 5)))
-
-    codes = possession.nearest_player_codes(atd)
-    c = codes[graded & (codes >= 0)]
-    flips = int(np.sum(c[1:] != c[:-1]))
-    print("  trocas da equipa mais perto (bruto): {}   ({:.1f} por minuto com bola visível)".format(
-        flips, flips / (len(c) / FPS / 60.0) if len(c) else 0.0))
-
-    xy = atd["ball_xy"][gv]
-    out = ((xy < 0) | (xy > 1)).any(axis=1)
-    print("  bola fora de [0,1]: {:.2f}% dos frames com bola".format(100.0 * out.mean()))
-    for margin in (0.01, 0.02):
-        near = ((xy < margin) | (xy > 1 - margin)).any(axis=1)
-        print("  bola a menos de {:.0f}% de uma linha (ou fora): {:.2f}%".format(
-            100 * margin, 100.0 * near.mean()))
-
-    speed = atd["ball_s"][gv]
-    speed = speed[np.isfinite(speed)]
-    if len(speed):
-        print("  velocidade da bola (unidades do ficheiro): " + "  ".join(
-            "p{} {:.2f}".format(p, np.percentile(speed, p)) for p in (10, 25, 50, 75, 90, 99)))
-        print("    " + "  ".join("<{} {:.1f}%".format(t, 100.0 * (speed < t).mean())
-                                 for t in (0.5, 1, 2)))
-    else:
-        print("  velocidade da bola: sem valores")
-
-    tracked = np.isfinite(atd["players_xy"][..., 0])[graded].sum(axis=1)
-    print("  jogadores seguidos por frame: média {:.1f}  p5 {:.0f}  p95 {:.0f}".format(
-        tracked.mean(), np.percentile(tracked, 5), np.percentile(tracked, 95)))
-    ps = atd["players_s"][graded]
-    ps = ps[np.isfinite(ps)]
-    if len(ps):
-        print("  velocidade dos jogadores (m/s): " + "  ".join(
-            "p{} {:.2f}".format(p, np.percentile(ps, p)) for p in (25, 50, 75, 90, 99)))
+    for key, name in (("prekickoff", "antes do pontapé de saída"),
+                      ("outside", "bola vista fora do campo"),
+                      ("gaps", "buracos classificados como paragem"),
+                      ("final", "TOTAL depois da limpeza")):
+        print("  {:<36} {:>5.1f}%".format(name, 100.0 * (parts[key] & graded).sum() / n))
+    final = parts["final"] & graded
+    print("  do D total, com bola visível: {:.1f}%".format(
+        100.0 * (final & visible).sum() / max(1, final.sum())))
+    return parts["final"]
 
 
-def tagging_summary(tags):
-    print("\n== Smart Tagging: set pieces ==")
+def gap_summary(atd, tags):
+    print("\n== buracos sem bola (>= {:.0f} s), por classificação ==".format(dead_ball.MIN_GAP_S))
+    gaps = dead_ball.gap_table(atd)
+    set_pieces = tags[tags["code"] == "SET PIECES"]
+    windows = list(zip(set_pieces["start_frame"], set_pieces["end_frame"]))
+
+    reasons = []
+    for gap in gaps:
+        if gap["reason"] not in reasons:
+            reasons.append(gap["reason"])
+    for reason in sorted(reasons):
+        chosen = [g for g in gaps if g["reason"] == reason]
+        length = np.array([g["stop"] - g["start"] for g in chosen], dtype=np.float64) / FPS
+        in_window = sum(1 for g in chosen
+                        if any(g["start"] < b and a < g["stop"] for a, b in windows))
+        print("  {:<42} {:<4}  n={:>3}  total {:>6.0f}s  mediana {:>5.1f}s  "
+              "5-10s: {}  10-30s: {}  >30s: {}  | tocam num set piece: {}".format(
+                  reason, "D" if chosen[0]["dead"] else "vivo", len(chosen), length.sum(),
+                  np.median(length), int(((length >= 5) & (length < 10)).sum()),
+                  int(((length >= 10) & (length < 30)).sum()), int((length >= 30).sum()),
+                  in_window))
+
+
+def set_piece_summary(tags, dead):
+    print("\n== set pieces do Smart Tagging vs paragens detetadas ==")
     sp = tags[tags["code"] == "SET PIECES"]
-    length = (sp["end_frame"] - sp["start_frame"]) / FPS
-    for kind in sorted(sp["type"].fillna("?").unique()):
-        pick = sp["type"].fillna("?") == kind
-        print("  {:<24} n={:>3}  duração mediana {:>4.1f}s  (mín {:.1f}s, máx {:.1f}s)  "
-              "sem equipa: {}".format(kind, int(pick.sum()), length[pick].median(),
-                                      length[pick].min(), length[pick].max(),
-                                      int(sp[pick]["team"].isna().sum())))
-    graded = match.graded_mask()
-    covered = np.zeros(len(graded), dtype=bool)
-    for a, b in zip(tags["start_frame"], tags["end_frame"]):
-        covered[max(0, int(a)):max(0, int(b))] = True
-    print("  frames avaliados cobertos por alguma fase do tagging: {:.1f}%".format(
-        100.0 * (covered & graded).sum() / graded.sum()))
+    kinds = sp["type"].fillna("?")
+    for kind in sorted(kinds.unique()):
+        rows = sp[kinds == kind]
+        with_dead, share = 0, []
+        for a, b in zip(rows["start_frame"], rows["end_frame"]):
+            window = dead[max(0, int(a)):max(0, int(b))]
+            if len(window):
+                with_dead += int(window.any())
+                share.append(window.mean())
+        print("  {:<24} n={:>3}  com paragem na janela: {:>3}  "
+              "parte da janela em D (média): {:>4.0f}%".format(
+                  kind, len(rows), with_dead, 100.0 * np.mean(share) if share else 0.0))
+
+
+def possession_summary(atd, dead):
+    print("\n== posse: números internos (só jogo vivo, frames avaliados) ==")
+    graded = match.graded_mask(len(dead))
+    alive = graded & ~dead
+    visible = features.ball_visible(atd)
+    codes = possession.control_codes(atd)
+    n_visible = float((alive & visible).sum())
+    print("  jogo vivo com bola visível: {:.1f}% do jogo vivo".format(
+        100.0 * n_visible / max(1, alive.sum())))
+    print("  nesses frames: controlo casa {:.1f}%  fora {:.1f}%  ninguém {:.1f}%".format(
+        100.0 * (alive & visible & (codes == 0)).sum() / max(1.0, n_visible),
+        100.0 * (alive & visible & (codes == 1)).sum() / max(1.0, n_visible),
+        100.0 * (alive & visible & (codes == -1)).sum() / max(1.0, n_visible)))
+
+    n_touches = n_sequences = n_valid = n_stretches = n_fallback = 0
+    min_frames = int(round(possession.MIN_CONTROL_S * FPS))
+    for half_start, half_stop in match.half_runs():
+        starts, stops = features.runs_of(~dead[half_start:half_stop])
+        for a, b in zip(starts.tolist(), stops.tolist()):
+            start, stop = half_start + a, half_start + b
+            n_stretches += 1
+            n_touches += len(possession.touches(codes, start, stop))
+            seqs = possession.sequences(codes, start, stop)
+            n_sequences += len(seqs)
+            n_valid += sum(1 for _, _, control in seqs if control >= min_frames)
+            if not possession.possession_changes(codes, start, stop):
+                n_fallback += 1
+    print("  troços de jogo vivo: {}   (sem nenhuma sequência válida: {})".format(
+        n_stretches, n_fallback))
+    print("  toques: {}   sequências: {}   sequências válidas (>= {:.1f} s): {}".format(
+        n_touches, n_sequences, possession.MIN_CONTROL_S, n_valid))
 
 
 def main():
@@ -171,8 +180,10 @@ def main():
     label_summary("baseline_smooth50 (referência)", pipeline.baseline(atd, 50))
     label_summary("pipeline atual", pipeline.run(atd, tags))
     kickoff_summary(atd, tags)
-    tracking_summary(atd)
-    tagging_summary(tags)
+    dead = dead_summary(atd, tags)
+    gap_summary(atd, tags)
+    set_piece_summary(tags, dead)
+    possession_summary(atd, dead)
     return 0
 
 

@@ -6,6 +6,8 @@ calculada em METROS (to_metres primeiro). Sem isso, as distâncias no eixo curto
 
 import numpy as np
 
+FPS = 25
+
 
 def to_metres(xy, pitch):
     """(..., 2) em 0-1 -> metros."""
@@ -45,6 +47,41 @@ def nearest_player(atd):
     return nearest, team
 
 
+def team_nearest_distances(atd):
+    """(d_casa, d_fora): distância em metros do jogador mais perto de CADA equipa à bola.
+
+    Infinito onde não há resposta (sem bola, ou nenhum jogador dessa equipa seguido), para as
+    comparações "<=" darem sempre False nesses frames.
+    """
+    sq = ball_player_sq_distances(atd)
+    safe = np.where(np.isfinite(sq), sq, np.inf)
+    teams = np.asarray(atd["team_of_track"])
+    home = np.sqrt(safe[:, teams == 0].min(axis=1))
+    away = np.sqrt(safe[:, teams == 1].min(axis=1))
+    return home, away
+
+
 def ball_visible(atd):
     """(N,) bool: o tracking vê a bola neste frame."""
     return np.isfinite(atd["ball_xy"]).all(axis=1)
+
+
+def ball_metres(atd):
+    """(N, 2) posição da bola em metros. NaN quando não se vê."""
+    return to_metres(atd["ball_xy"], atd["pitch"])
+
+
+def edge_distance(ball_m, pitch):
+    """(N,) distância em metros da bola à linha limite mais próxima.
+
+    Positiva dentro do campo, negativa fora, NaN sem bola.
+    """
+    length, width = float(pitch[0]), float(pitch[1])
+    x, y = ball_m[..., 0], ball_m[..., 1]
+    return np.minimum(np.minimum(x, length - x), np.minimum(y, width - y))
+
+
+def runs_of(mask):
+    """(inícios, fins) meio-abertos dos troços consecutivos de True num array bool."""
+    edges = np.diff(np.concatenate(([0], np.asarray(mask).astype(np.int8), [0])))
+    return np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)

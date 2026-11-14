@@ -2,7 +2,6 @@
 
     python scripts/make_submission.py                      # gera evaluation/results/candidato.csv
     python scripts/make_submission.py --name teste_v2      # outro nome
-    python scripts/make_submission.py --window 25          # outro parâmetro
 
 O que faz, por ordem:
   1. lê o tracking (cria a cache em cache/ na primeira vez, demora 1-2 min)
@@ -11,6 +10,9 @@ O que faz, por ordem:
   4. escreve o CSV em evaluation/results/
   5. valida com as mesmas regras do scorer oficial
   6. mostra o score no GT público (SÓ para ver se nada está partido, nunca para escolher versões)
+
+Não há parâmetros na linha de comandos de propósito: todos os valores do método estão escritos
+em src/, com a justificação ao lado, para o ficheiro ser sempre gerado da mesma maneira.
 
 Determinístico: o mesmo código + os mesmos dados = o mesmo ficheiro, byte a byte. Se algum dia
 isto deixar de ser verdade (aleatoriedade, ordem de dicionários, versões), é um bug a sério.
@@ -29,15 +31,12 @@ from src import data, pipeline, submission, tagging  # noqa: E402
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", default="candidato", help="nome do ficheiro, sem .csv")
-    parser.add_argument("--window", type=int, default=50,
-                        help="meia-janela do voto por maioria, em frames (v0 = baseline)")
-    parser.add_argument("--no-tags", action="store_true", help="não ler o Smart Tagging")
     args = parser.parse_args()
 
     atd = data.load()
-    tags = None if args.no_tags else tagging.load()
+    tags = tagging.load()
 
-    labels = pipeline.run(atd, tags, window=args.window)
+    labels = pipeline.run(atd, tags)
     path = submission.write(labels, args.name)
 
     reason = submission.validate(path)

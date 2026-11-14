@@ -18,13 +18,11 @@ def baseline(atd, window=50):
     return possession.majority_smooth(codes, window)
 
 
-def run(atd, tags=None, window=50):
-    labels = baseline(atd, window)
+def run(atd, tags=None):
+    dead = dead_ball.dead_ball_mask(atd, tags)      # frente 1: bola morta
+    team = possession.assign(atd, dead)             # frente 2: quem tem a bola no jogo vivo
 
-    dead = dead_ball.dead_ball_mask(atd, tags)
-    if dead is not None:
-        labels = np.where(dead, "D", labels)
-
+    labels = np.where(dead, "D", np.where(team == 0, "H", "A"))
     # Fora das duas partes não há nada para avaliar: X.
     labels = np.where(match.graded_mask(len(labels)), labels, "X")
     return labels
