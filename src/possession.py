@@ -45,8 +45,9 @@ FPS = features.FPS
 NOBODY = -1
 
 # Bola "nos pés": o tracking dá o centro do jogador, e uma bola conduzida anda até 1.5-2 m à
-# frente dele. 2 m apanha a condução sem apanhar um adversário que só está por perto.
-CONTROL_RADIUS_M = 2.0
+# frente dele. 1.8 m apanha quase toda a condução e reduz os casos em que um adversário que só
+# está por perto conta como tendo a bola. Escolhido por lógica de futebol, sem olhar para scores.
+CONTROL_RADIUS_M = 1.8
 # Se o adversário mais próximo está praticamente à mesma distância, é uma bola dividida.
 CONTROL_MARGIN_M = 0.3
 # Menos de 3 frames (0.12 s) seguidos é ruído do tracking, não um toque.
