@@ -1,4 +1,4 @@
-"""Teste de sanidade: o nosso pipeline v0 tem de dar EXATAMENTE a baseline_smooth50 oficial.
+"""Teste de sanidade: a nossa base tem de dar EXATAMENTE a baseline_smooth50 oficial.
 
     python scripts/check_reproduces_baseline.py
 
@@ -32,7 +32,7 @@ def read_normalised(path):
 
 
 def main():
-    labels = pipeline.run(data.load(), tags=None, window=50)
+    labels = pipeline.baseline(data.load(), window=50)
     with tempfile.TemporaryDirectory() as folder:
         path = submission.write(labels, "baseline_check", results_dir=folder)
         ours, ours_ending = read_normalised(path)
