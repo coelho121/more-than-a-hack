@@ -17,13 +17,17 @@ PUBLIC_GT = os.path.join(ROOT, "evaluation", "gt", "BAR-ATH_possession_gt_public
 
 
 def write(labels, name, results_dir=RESULTS_DIR):
-    """frame,label CSV com uma linha por frame. Devolve o caminho."""
+    """frame,label CSV com uma linha por frame. Devolve o caminho.
+
+    newline="\\n" força o mesmo fim de linha em todos os sistemas. Sem isto o Windows escreve
+    \\r\\n e o ficheiro deixa de ser igual byte a byte ao gerado em Linux ou Mac.
+    """
     expected = GAMES[GAME]["n_video_frames"]
     if len(labels) != expected:
         raise ValueError("{} labels, o vídeo tem {} frames".format(len(labels), expected))
     os.makedirs(results_dir, exist_ok=True)
     path = os.path.join(results_dir, "{}.csv".format(name))
-    with open(path, "w") as handle:
+    with open(path, "w", newline="\n") as handle:
         handle.write("frame,label\n")
         handle.writelines("{},{}\n".format(i, label) for i, label in enumerate(labels))
     return path
