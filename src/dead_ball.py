@@ -1,6 +1,6 @@
 """Frente 1: quando é que a bola está morta (D).
 
-Estado atual (passo 3). A bola é dada como morta em cinco situações:
+Estado atual (passo 6). A bola é dada como morta em seis situações:
 
   1. ANTES DO PONTAPÉ DE SAÍDA de cada parte. O Smart Tagging tem um SET PIECES do tipo
      "Kick Off (Start)" por parte, que marca um intervalo de alguns segundos à volta do
@@ -17,10 +17,14 @@ Estado atual (passo 3). A bola é dada como morta em cinco situações:
        c) ia a caminho de sair (posição + velocidade)?                              -> D
        d) reaparece junto a uma linha limite?                                       -> D
        e) dura mais de MAX_HIDDEN_S?  (ninguém esconde a bola tanto tempo em jogo)  -> D
-       f) sumiu e voltou fora das grandes áreas?  (fora da área só o árbitro parado
-          explica uma bola na mão ou desaparecida tanto tempo)                      -> D
-       g) sobra: sumiu ou voltou dentro de uma grande área e durou pouco. É o caso
+       f) sumiu e voltou fora das grandes áreas, e os jogadores estão parados?
+          (velocidade coletiva média abaixo de WALKING_SPEED_MS: andam a passo,
+          como numa falta ou num fora de jogo)                                      -> D
+       g) sumiu e voltou fora das grandes áreas, mas os jogadores continuam a
+          correr: a câmara perdeu a bola com o jogo a decorrer.                     -> vivo
+       h) sobra: sumiu ou voltou dentro de uma grande área e durou pouco. É o caso
           do guarda-redes com a bola nas mãos ou de um molho de jogadores na área.  -> vivo
+     Quando o jogo continua, a posse fica com quem a tinha (src/possession.py).
 
   4. BOLA PARADA À VISTA. A bola quase não sai do sítio (REST_RANGE_M) durante pelo menos 1 s.
      Isso é bola morta se:
@@ -37,6 +41,15 @@ Estado atual (passo 3). A bola é dada como morta em cinco situações:
 
 No fim há uma limpeza com lógica de futebol: uma paragem não dura menos de MIN_DEAD_S e não
 há jogo vivo durante menos de MIN_ALIVE_S entre duas paragens.
+
+  6. FALSO JOGO NO MEIO DE UMA PARAGEM. Durante uma paragem a bola às vezes volta a ver-se e
+     os jogadores trocam uns toques (devolvem-na, passam-na a quem vai marcar). Isso parece
+     posse mas não é. Um bocado de "jogo vivo" passa a D se cumprir as três condições:
+       - está entre duas paragens já detetadas,
+       - dura menos de SLIVER_MAX_S,
+       - os jogadores andam a passo (velocidade coletiva média abaixo de WALKING_SPEED_MS).
+     A velocidade nunca é usada sozinha: uma fase lenta do jogo não está colada a paragens
+     dos dois lados, e um lançamento que sai logo outra vez tem os jogadores a correr.
 
 Contrato: dead_ball_mask(atd, tags) devolve um array bool (N,), True onde a bola está morta.
 """
@@ -79,6 +92,13 @@ VELOCITY_FRAMES = 5
 # ela nas mãos. A lei dá-lhe poucos segundos e na prática raramente passa de 10 a 15.
 MAX_HIDDEN_S = 15.0
 
+# Jogadores "parados": a velocidade coletiva (mediana dos jogadores) fica abaixo do passo de
+# caminhada, cerca de 1.5 m/s (5.4 km/h). O scripts/speed_diagnostic.py mostra que este valor
+# separa os buracos em que a bola saiu de certeza (mediana 1.15 m/s) do jogo corrido (mediana
+# 2.0 m/s) com cerca de 20% de erro para cada lado. Não usa ground truth: os dois grupos de
+# referência são definidos pelas outras regras.
+WALKING_SPEED_MS = 1.5
+
 # Grande área: 16.5 m de profundidade, 40.32 m de largura (20.16 m para cada lado do centro).
 BOX_DEPTH_M = 16.5
 BOX_HALF_WIDTH_M = 20.16
@@ -105,6 +125,10 @@ GOAL_MARGIN_M = 1.0
 GOAL_LOOKBACK_S = 120.0
 GOAL_CLUSTER_S = 5.0
 GOAL_DEFAULT_S = 40.0
+
+# Falso jogo no meio de uma paragem: no máximo 7 s. Devolver a bola e passá-la a quem vai
+# marcar não demora mais do que isso; acima de 7 s já é mais provável ser uma jogada a sério.
+SLIVER_MAX_S = 7.0
 
 # Limpeza. O reinício mais rápido (um lançamento apressado) demora uns segundos, e não há
 # jogadas de menos de 2 s entre duas paragens.
@@ -205,8 +229,11 @@ def _velocity(ball_m, visible, frame, lowest):
     return (ball_m[frame] - ball_m[first]) / float(frame - first) * FPS
 
 
-def classify_gap(ball_m, visible, pitch, start, stop, half_start, half_stop):
-    """(está_morta, razão) para um buraco [start, stop) dentro de uma parte."""
+def classify_gap(ball_m, visible, speed, pitch, start, stop, half_start, half_stop):
+    """(está_morta, razão) para um buraco [start, stop) dentro de uma parte.
+
+    speed: (N,) velocidade coletiva dos jogadores (features.collective_speed).
+    """
     if start <= half_start:
         return True, "a) início da parte"
     if stop >= half_stop:
@@ -230,15 +257,21 @@ def classify_gap(ball_m, visible, pitch, start, stop, half_start, half_stop):
         return True, "e) mais de {:.0f} s sem bola".format(MAX_HIDDEN_S)
 
     if not (in_penalty_area(ball_m[before], pitch) or in_penalty_area(ball_m[stop], pitch)):
-        return True, "f) sumiu e voltou fora das áreas"
+        # Fora das áreas a posição não decide: vê-se se os jogadores pararam. Sem velocidade
+        # disponível, na dúvida o jogo continua (a posse fica com quem a tinha).
+        mean_speed = features.interval_mean(speed, start, stop)
+        if mean_speed < WALKING_SPEED_MS:
+            return True, "f) fora das áreas, jogadores parados"
+        return False, "g) fora das áreas, jogadores a correr"
 
-    return False, "g) curto e numa área (guarda-redes)"
+    return False, "h) curto e numa área (guarda-redes)"
 
 
 def gap_table(atd):
     """[{start, stop, dead, reason}] todos os buracos de pelo menos MIN_GAP_S, por ordem."""
     visible = features.ball_visible(atd)
     ball_m = features.ball_metres(atd)
+    speed = features.collective_speed(atd)
     out = []
     for half_start, half_stop in match.half_runs():
         starts, stops = features.runs_of(~visible[half_start:half_stop])
@@ -246,7 +279,7 @@ def gap_table(atd):
             if b - a < _frames(MIN_GAP_S):
                 continue
             start, stop = half_start + a, half_start + b
-            dead, reason = classify_gap(ball_m, visible, atd["pitch"], start, stop,
+            dead, reason = classify_gap(ball_m, visible, speed, atd["pitch"], start, stop,
                                         half_start, half_stop)
             out.append({"start": start, "stop": stop, "dead": dead, "reason": reason})
     return out
@@ -418,6 +451,32 @@ def clean(mask):
     return mask
 
 
+# -- falso jogo no meio de uma paragem -----------------------------------------------------------
+
+def alive_stretches(dead):
+    """[(start, stop)] bocados de jogo vivo ENTRE duas paragens (os que tocam no início ou no
+    fim de uma parte ficam de fora)."""
+    out = []
+    for half_start, half_stop in match.half_runs():
+        starts, stops = features.runs_of(~dead[half_start:half_stop])
+        for a, b in zip(starts.tolist(), stops.tolist()):
+            if a > 0 and b < half_stop - half_start:
+                out.append((half_start + a, half_start + b))
+    return out
+
+
+def sliver_mask(atd, dead):
+    """(N,) bool: bocados curtos e lentos de "jogo vivo" entre duas paragens."""
+    speed = features.collective_speed(atd)
+    mask = np.zeros(len(dead), dtype=bool)
+    for start, stop in alive_stretches(dead):
+        if stop - start >= _frames(SLIVER_MAX_S):
+            continue
+        if features.interval_mean(speed, start, stop) < WALKING_SPEED_MS:   # NaN dá False
+            mask[start:stop] = True
+    return mask
+
+
 # -- tudo junto ---------------------------------------------------------------------------------
 
 def components(atd, tags=None):
@@ -429,9 +488,12 @@ def components(atd, tags=None):
     stationary = stationary_mask(atd, base)
     before_goals = clean(outside | gaps | stationary)
     goals = goal_mask(atd, tags, before_goals)
-    final = clean(before_goals | goals | prekickoff) | prekickoff
+    before_slivers = clean(before_goals | goals | prekickoff) | prekickoff
+    slivers = sliver_mask(atd, before_slivers)
+    final = before_slivers | slivers
     return {"prekickoff": prekickoff, "outside": outside, "gaps": gaps, "base": base,
-            "stationary": stationary, "goals": goals, "final": final}
+            "stationary": stationary, "goals": goals, "before_slivers": before_slivers,
+            "slivers": slivers, "final": final}
 
 
 def dead_ball_mask(atd, tags=None):

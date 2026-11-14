@@ -4,8 +4,9 @@
 
 Imprime, para a baseline e para o pipeline atual: distribuição de labels, número e duração das
 posses e das paragens. Depois mostra de onde vem a bola morta, como foram classificados os
-buracos sem bola e os períodos de bola parada, como foram tratados os golos, se os set pieces
-do Smart Tagging coincidem com paragens detetadas, e alguns números internos da posse.
+buracos sem bola e os períodos de bola parada, como foram tratados os golos, que bocados de
+jogo entre paragens passaram a bola morta, se os set pieces do Smart Tagging coincidem com
+paragens detetadas, e alguns números internos da posse.
 
 Serve para escolher parâmetros com lógica de futebol (e não pelo GT público). O score no GT
 público aparece SÓ como alarme de "partiu-se alguma coisa".
@@ -94,6 +95,7 @@ def dead_summary(atd, tags):
                       ("gaps", "buracos classificados como paragem"),
                       ("stationary", "bola parada à vista"),
                       ("goals", "golos (do golo ao pontapé de saída)"),
+                      ("slivers", "falso jogo no meio de uma paragem"),
                       ("final", "TOTAL depois da limpeza")):
         print("  {:<38} {:>5.1f}%".format(name, 100.0 * (parts[key] & graded).sum() / n))
     print("  (as parcelas sobrepõem-se, por isso a soma não dá o total)")
@@ -149,6 +151,25 @@ def goal_summary(atd, tags, parts):
         print("  tag GOALS {}: dura {:.0f} s; acaba {} do pontapé de saída seguinte".format(
             index, (b - a) / float(FPS),
             "{:.0f} s antes".format((min(after) - b) / float(FPS)) if after else "sem relação"))
+
+
+def sliver_summary(atd, parts):
+    print("\n== jogo vivo entre duas paragens, antes da regra do falso jogo ==")
+    speed = features.collective_speed(atd)
+    stretches = dead_ball.alive_stretches(parts["before_slivers"])
+    limit = dead_ball.WALKING_SPEED_MS
+    print("  {:<12} {:>4}   {:>22}   {:>22}".format(
+        "duração", "n", "a passo (< {:.1f} m/s)".format(limit), "a correr (>= {:.1f} m/s)".format(limit)))
+    for name, low, high in (("< 5 s", 0, 5), ("5 a 10 s", 5, 10), ("10 a 20 s", 10, 20),
+                            ("20 a 40 s", 20, 40), ("> 40 s", 40, 1e9)):
+        chosen = [(a, b) for a, b in stretches if low <= (b - a) / float(FPS) < high]
+        slow = sum(1 for a, b in chosen if features.interval_mean(speed, a, b) < limit)
+        print("  {:<12} {:>4}   {:>22}   {:>22}".format(name, len(chosen), slow, len(chosen) - slow))
+    converted = dead_ball.alive_stretches(parts["before_slivers"])
+    converted = [(a, b) for a, b in converted if parts["slivers"][a:b].all()]
+    seconds = sum(b - a for a, b in converted) / float(FPS)
+    print("  passaram a D: {} bocados, {:.0f} s no total (menos de {:.0f} s e a passo)".format(
+        len(converted), seconds, dead_ball.SLIVER_MAX_S))
 
 
 def set_piece_summary(tags, dead):
@@ -212,6 +233,7 @@ def main():
     windows = gap_summary(atd, tags)
     stationary_summary(atd, parts, windows)
     goal_summary(atd, tags, parts)
+    sliver_summary(atd, parts)
     set_piece_summary(tags, parts["final"])
     possession_summary(atd, parts["final"])
     return 0

@@ -42,6 +42,8 @@ PARAMETERS = (
     (dead_ball, "EDGE_M", False),
     (dead_ball, "LOOKAHEAD_S", False),
     (dead_ball, "MAX_HIDDEN_S", False),
+    (dead_ball, "WALKING_SPEED_MS", False),
+    (dead_ball, "SLIVER_MAX_S", False),
     (dead_ball, "REST_RANGE_M", False),
     (dead_ball, "UNATTENDED_M", False),
     (dead_ball, "MIN_REST_S", False),

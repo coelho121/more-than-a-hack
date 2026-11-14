@@ -4,9 +4,13 @@ Regra: as coordenadas do ATD são 0-1 e o campo não é quadrado, por isso qualq
 calculada em METROS (to_metres primeiro). Sem isso, as distâncias no eixo curto ficam esticadas.
 """
 
+import warnings
+
 import numpy as np
 
 FPS = 25
+# Mínimo de jogadores seguidos num frame para a velocidade coletiva ter significado.
+MIN_PLAYERS_FOR_SPEED = 10
 
 
 def to_metres(xy, pitch):
@@ -79,6 +83,28 @@ def edge_distance(ball_m, pitch):
     length, width = float(pitch[0]), float(pitch[1])
     x, y = ball_m[..., 0], ball_m[..., 1]
     return np.minimum(np.minimum(x, length - x), np.minimum(y, width - y))
+
+
+def collective_speed(atd):
+    """(N,) velocidade coletiva em m/s: a mediana da velocidade dos jogadores seguidos no frame.
+
+    A mediana ignora os extremos (um guarda-redes parado, um extremo em sprint). NaN quando há
+    menos de MIN_PLAYERS_FOR_SPEED jogadores seguidos.
+    """
+    speeds = atd["players_s"]
+    count = np.isfinite(speeds).sum(axis=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        median = np.nanmedian(speeds, axis=1)
+    median[count < MIN_PLAYERS_FOR_SPEED] = np.nan
+    return median
+
+
+def interval_mean(values, start, stop):
+    """Média de values[start:stop] ignorando NaN; NaN se não houver nenhum valor."""
+    window = values[start:stop]
+    window = window[np.isfinite(window)]
+    return float(window.mean()) if len(window) else float("nan")
 
 
 def runs_of(mask):
