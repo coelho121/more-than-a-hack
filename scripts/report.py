@@ -4,8 +4,8 @@
 
 Imprime, para a baseline e para o pipeline atual: distribuição de labels, número e duração das
 posses e das paragens. Depois mostra de onde vem a bola morta, como foram classificados os
-buracos sem bola, se os set pieces do Smart Tagging coincidem com paragens detetadas, e alguns
-números internos da posse.
+buracos sem bola e os períodos de bola parada, como foram tratados os golos, se os set pieces
+do Smart Tagging coincidem com paragens detetadas, e alguns números internos da posse.
 
 Serve para escolher parâmetros com lógica de futebol (e não pelo GT público). O score no GT
 público aparece SÓ como alarme de "partiu-se alguma coisa".
@@ -92,35 +92,63 @@ def dead_summary(atd, tags):
     for key, name in (("prekickoff", "antes do pontapé de saída"),
                       ("outside", "bola vista fora do campo"),
                       ("gaps", "buracos classificados como paragem"),
+                      ("stationary", "bola parada à vista"),
+                      ("goals", "golos (do golo ao pontapé de saída)"),
                       ("final", "TOTAL depois da limpeza")):
-        print("  {:<36} {:>5.1f}%".format(name, 100.0 * (parts[key] & graded).sum() / n))
+        print("  {:<38} {:>5.1f}%".format(name, 100.0 * (parts[key] & graded).sum() / n))
+    print("  (as parcelas sobrepõem-se, por isso a soma não dá o total)")
     final = parts["final"] & graded
     print("  do D total, com bola visível: {:.1f}%".format(
         100.0 * (final & visible).sum() / max(1, final.sum())))
-    return parts["final"]
+    return parts
 
 
-def gap_summary(atd, tags):
-    print("\n== buracos sem bola (>= {:.0f} s), por classificação ==".format(dead_ball.MIN_GAP_S))
-    gaps = dead_ball.gap_table(atd)
-    set_pieces = tags[tags["code"] == "SET PIECES"]
-    windows = list(zip(set_pieces["start_frame"], set_pieces["end_frame"]))
-
-    reasons = []
-    for gap in gaps:
-        if gap["reason"] not in reasons:
-            reasons.append(gap["reason"])
-    for reason in sorted(reasons):
-        chosen = [g for g in gaps if g["reason"] == reason]
+def _reason_lines(items, windows):
+    reasons = sorted({item["reason"] for item in items})
+    for reason in reasons:
+        chosen = [g for g in items if g["reason"] == reason]
         length = np.array([g["stop"] - g["start"] for g in chosen], dtype=np.float64) / FPS
         in_window = sum(1 for g in chosen
                         if any(g["start"] < b and a < g["stop"] for a, b in windows))
-        print("  {:<42} {:<4}  n={:>3}  total {:>6.0f}s  mediana {:>5.1f}s  "
-              "5-10s: {}  10-30s: {}  >30s: {}  | tocam num set piece: {}".format(
+        print("  {:<40} {:<4}  n={:>3}  total {:>5.0f}s  mediana {:>5.1f}s  "
+              "<5s: {}  5-10s: {}  10-30s: {}  >30s: {}  | tocam num set piece: {}".format(
                   reason, "D" if chosen[0]["dead"] else "vivo", len(chosen), length.sum(),
-                  np.median(length), int(((length >= 5) & (length < 10)).sum()),
+                  np.median(length), int((length < 5).sum()),
+                  int(((length >= 5) & (length < 10)).sum()),
                   int(((length >= 10) & (length < 30)).sum()), int((length >= 30).sum()),
                   in_window))
+
+
+def gap_summary(atd, tags):
+    print("\n== buracos sem bola (>= {:.0f} s), pela primeira regra que se aplica ==".format(
+        dead_ball.MIN_GAP_S))
+    set_pieces = tags[tags["code"] == "SET PIECES"]
+    windows = list(zip(set_pieces["start_frame"], set_pieces["end_frame"]))
+    _reason_lines(dead_ball.gap_table(atd), windows)
+    return windows
+
+
+def stationary_summary(atd, parts, windows):
+    print("\n== bola parada à vista (>= 1 s), pela primeira regra que se aplica ==")
+    _reason_lines(dead_ball.stationary_table(atd, parts["base"]), windows)
+
+
+def goal_summary(atd, tags, parts):
+    print("\n== golos ==")
+    before_goals = dead_ball.clean(parts["outside"] | parts["gaps"] | parts["stationary"])
+    goals = dead_ball.goal_table(atd, tags, before_goals)
+    if not goals:
+        print("  nenhum Kick Off (After Goal) no tagging")
+    for index, goal in enumerate(goals, 1):
+        print("  golo {}: paragem de {:.0f} s   [{}]".format(
+            index, (goal["stop"] - goal["start"]) / float(FPS), goal["method"]))
+    # Os GOALS do tagging não são usados no método; isto é só para perceber o que marcam.
+    tagged = tags[tags["code"] == "GOALS"]
+    for index, (a, b) in enumerate(zip(tagged["start_frame"], tagged["end_frame"]), 1):
+        after = [g["stop"] for g in goals if g["stop"] >= a]
+        print("  tag GOALS {}: dura {:.0f} s; acaba {} do pontapé de saída seguinte".format(
+            index, (b - a) / float(FPS),
+            "{:.0f} s antes".format((min(after) - b) / float(FPS)) if after else "sem relação"))
 
 
 def set_piece_summary(tags, dead):
@@ -180,10 +208,12 @@ def main():
     label_summary("baseline_smooth50 (referência)", pipeline.baseline(atd, 50))
     label_summary("pipeline atual", pipeline.run(atd, tags))
     kickoff_summary(atd, tags)
-    dead = dead_summary(atd, tags)
-    gap_summary(atd, tags)
-    set_piece_summary(tags, dead)
-    possession_summary(atd, dead)
+    parts = dead_summary(atd, tags)
+    windows = gap_summary(atd, tags)
+    stationary_summary(atd, parts, windows)
+    goal_summary(atd, tags, parts)
+    set_piece_summary(tags, parts["final"])
+    possession_summary(atd, parts["final"])
     return 0
 
 
