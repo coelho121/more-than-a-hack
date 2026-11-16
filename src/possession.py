@@ -52,15 +52,15 @@ CONTROL_RADIUS_M = 1.8
 CONTROL_MARGIN_M = 0.3
 # Menos de 3 frames (0.12 s) seguidos é ruído do tracking, não um toque.
 MIN_TOUCH_FRAMES = 3
-# "Controlada" = pelo menos 1 s de bola nos pés, somado ao longo da sequência. Uma bola a
+# "Controlada" = pelo menos 0.6 s de bola nos pés, somado ao longo da sequência. Uma bola a
 # 10 m/s que passa a 1 m de um adversário fica uns 0.35 s dentro do raio dele; um corte ou um
-# desvio fica menos. 1 s exige dois ou três toques a sério, ou um jogador a segurar a bola.
-MIN_CONTROL_S = 1.0
-# Uma posse no meio do jogo tem de durar pelo menos 3 s de relógio, senão não é posse: é uma
+# desvio fica menos. 0.6 s exige dois ou três toques a sério, ou um jogador a segurar a bola.
+MIN_CONTROL_S = 0.6
+# Uma posse no meio do jogo tem de durar pelo menos 2 s de relógio, senão não é posse: é uma
 # bola recuperada e logo perdida. O CHALLENGE.md fala em "manter a bola alguns segundos".
 # Atenção à diferença: MIN_CONTROL_S conta só o tempo com a bola nos pés; isto conta o tempo
 # todo desde que a equipa ganha a bola até a perder, incluindo os passes em viagem.
-MIN_SPELL_S = 3.0
+MIN_SPELL_S = 2.0
 
 
 # -- baseline oficial (só para o teste de sanidade) ---------------------------------------------
